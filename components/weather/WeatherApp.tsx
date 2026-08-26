@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import { AnimatePresence, animate, motion, useMotionValue } from "motion/react";
 import { CloudRain, Compass, Droplets, LocateFixed, MapPin, Navigation, RefreshCw, Search, Settings, Sunrise, Sunset, Wind, X, Zap } from "lucide-react";
 import { useWeather, AUCKLAND } from "@/hooks/useWeather";
@@ -143,6 +144,7 @@ function SettingsPanel({ open, close, quality, setQuality }: { open: boolean; cl
     <div className="modal-head"><div><span>ATMOSPHERE</span><h2>Visual quality</h2></div><button onClick={close} aria-label="Close settings"><X /></button></div>
     <p className="settings-copy">Choose how much motion and weather detail to render. Reduced-motion preferences are always respected.</p>
     <div className="quality-list">{qualityOptions.map((option) => <button key={option.value} className={quality === option.value ? "selected" : ""} onClick={() => setQuality(option.value)}><span><b>{option.label}</b><small>{option.note}</small></span><i /></button>)}</div>
+    <Link className="settings-about-link" href="/about">About Me <span>Meet the designer and developer</span></Link>
   </motion.div></motion.div>}</AnimatePresence>;
 }
 

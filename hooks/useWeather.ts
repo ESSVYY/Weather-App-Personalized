@@ -9,6 +9,8 @@ const CACHE_KEY = "atmos-weather-cache-v1";
 const LOCATION_KEY = "atmos-location-v1";
 const MAX_AGE = 10 * 60 * 1000;
 
+const announceWeather = (next: WeatherData) => window.dispatchEvent(new CustomEvent<WeatherData>("atmos-weather-updated", { detail: next }));
+
 type Cache = { data: WeatherData; savedAt: number };
 
 export function useWeather() {
@@ -27,7 +29,7 @@ export function useWeather() {
     const cached = cachedRaw ? JSON.parse(cachedRaw) as Cache : null;
     const same = cached?.data.location.latitude === target.latitude && cached?.data.location.longitude === target.longitude;
     if (!force && cached && same && Date.now() - cached.savedAt < MAX_AGE) {
-      setData(cached.data); setLoading(false); return;
+      setData(cached.data); setLoading(false); announceWeather(cached.data); return;
     }
     if (data) setRefreshing(true); else setLoading(true);
     setError(null);
@@ -35,10 +37,11 @@ export function useWeather() {
       const next = await fetchWeather(target, controller.current.signal);
       setData(next); setOffline(false);
       localStorage.setItem(CACHE_KEY, JSON.stringify({ data: next, savedAt: Date.now() }));
+      announceWeather(next);
     } catch (cause) {
       if ((cause as Error).name === "AbortError") return;
       if (cached && same) { setData(cached.data); setOffline(true); }
-      else setError("We couldn’t reach the forecast. Check your connection and try again.");
+      else { setError("We couldn’t reach the forecast. Check your connection and try again."); window.dispatchEvent(new Event("atmos-weather-error")); }
     } finally { setLoading(false); setRefreshing(false); }
   }, [data]);
 
