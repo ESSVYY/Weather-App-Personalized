@@ -7,9 +7,13 @@
     "build": "next build && node scripts/prepare-dist.mjs",
     "start": "next start",
     "lint": "eslint .",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "android:sync": "npm run build && cap sync android",
+    "android:apk": "npm run android:sync && cd android && gradlew.bat assembleDebug"
   },
   "dependencies": {
+    "@capacitor/android": "^7.6.8",
+    "@capacitor/core": "^7.6.8",
     "lucide-react": "latest",
     "motion": "latest",
     "next": "latest",
@@ -17,6 +21,7 @@
     "react-dom": "latest"
   },
   "devDependencies": {
+    "@capacitor/cli": "^7.6.8",
     "@tailwindcss/postcss": "latest",
     "@types/node": "latest",
     "@types/react": "latest",
