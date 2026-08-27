@@ -1,5 +1,8 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
+import { StickyGlassHeader } from "@/components/navigation/StickyGlassHeader";
+import { OrganicWeatherMesh } from "@/components/background/OrganicWeatherMesh";
+import { PageTransition } from "@/components/navigation/PageTransition";
 
 export const metadata: Metadata = {
   metadataBase: new URL("https://atmos-auckland-weather.arshdeepsingh3105200.chatgpt.site"),
@@ -15,5 +18,5 @@ export const metadata: Metadata = {
 export const viewport: Viewport = { width: "device-width", initialScale: 1, maximumScale: 1, viewportFit: "cover", themeColor: "#497da6" };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
-  return <html lang="en-NZ"><body>{children}</body></html>;
+  return <html lang="en-NZ" suppressHydrationWarning data-scroll-behavior="smooth"><body suppressHydrationWarning><OrganicWeatherMesh /><StickyGlassHeader /><PageTransition>{children}</PageTransition></body></html>;
 }

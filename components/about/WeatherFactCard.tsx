@@ -14,14 +14,16 @@ export function WeatherFactCard() {
   const reducedMotion = useReducedMotion();
   useEffect(() => {
     queueMicrotask(() => {
-      const next = getRandomWeatherFact(sessionStorage.getItem(LAST_FACT_KEY) ?? undefined);
-      sessionStorage.setItem(LAST_FACT_KEY, next.id);
+      let previous: string | undefined;
+      try { previous = sessionStorage.getItem(LAST_FACT_KEY) ?? undefined; } catch { /* Session storage is optional. */ }
+      const next = getRandomWeatherFact(previous);
+      try { sessionStorage.setItem(LAST_FACT_KEY, next.id); } catch { /* The fact still renders without persistence. */ }
       setFact(next);
     });
   }, []);
   const another = () => {
     const next = getRandomWeatherFact(fact?.id);
-    sessionStorage.setItem(LAST_FACT_KEY, next.id);
+    try { sessionStorage.setItem(LAST_FACT_KEY, next.id); } catch { /* The fact still changes without persistence. */ }
     setFact(next);
   };
   return (

@@ -7,6 +7,7 @@ import { CloudRain, Compass, Droplets, LocateFixed, MapPin, Navigation, RefreshC
 import { useWeather, AUCKLAND } from "@/hooks/useWeather";
 import { searchLocations } from "@/lib/openMeteo";
 import { compassDirection, weatherDescription } from "@/lib/weatherCodes";
+import { softEase } from "@/lib/animationConfig";
 import type { Location, QualityMode, WeatherData, WeatherDay } from "@/types/weather";
 import { WeatherIcon } from "./WeatherIcon";
 import { WeatherScene } from "./WeatherScene";
@@ -126,15 +127,17 @@ function ForecastSheet({ data, selectedDay, setSelectedDay }: { data: WeatherDat
   </motion.aside>;
 }
 
+type SearchStatus = "idle" | "typing" | "loading" | "success" | "empty" | "error";
 function LocationSearch({ open, close, select }: { open: boolean; close: () => void; select: (location: Location) => void }) {
-  const [query, setQuery] = useState(""); const [results, setResults] = useState<Location[]>([]); const [searching, setSearching] = useState(false); const [searched, setSearched] = useState(false);
-  useEffect(() => { if (query.trim().length < 2) return; const controller = new AbortController(); const timer = setTimeout(async () => { setSearching(true); try { setResults(await searchLocations(query, controller.signal)); setSearched(true); } catch { setResults([]); } finally { setSearching(false); } }, 350); return () => { clearTimeout(timer); controller.abort(); }; }, [query]);
+  const [query, setQuery] = useState(""); const [results, setResults] = useState<Location[]>([]); const [status, setStatus] = useState<SearchStatus>("idle"); const [activeIndex, setActiveIndex] = useState(0); const requestId = useRef(0);
+  useEffect(() => { const trimmed = query.trim(); if (!open || trimmed.length < 2) return; const controller = new AbortController(); const id = ++requestId.current; const timer = setTimeout(async () => { setStatus("loading"); try { const next = await searchLocations(trimmed, controller.signal); if (id !== requestId.current) return; setResults(next); setActiveIndex(0); setStatus(next.length ? "success" : "empty"); } catch (cause) { if (id === requestId.current && (!(cause instanceof Error) || cause.name !== "AbortError")) setStatus("error"); } }, 300); return () => { clearTimeout(timer); controller.abort(); }; }, [open, query]);
+  const choose = (item: Location) => { select(item); close(); };
   return <AnimatePresence>{open && <motion.div className="modal-backdrop" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onMouseDown={(event) => event.target === event.currentTarget && close()}>
-    <motion.div className="modal search-modal" initial={{ y: 40, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 30, opacity: 0 }} transition={spring} role="dialog" aria-modal="true" aria-label="Search for a location">
+    <motion.div className="modal search-modal" initial={{ y: 40, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 30, opacity: 0 }} transition={spring} role="dialog" aria-modal="true" aria-label="Search for a location" onKeyDown={(event) => { if (event.key === "Escape") close(); }}>
       <div className="modal-head"><div><span>CHANGE LOCATION</span><h2>Where are you?</h2></div><button onClick={close} aria-label="Close search"><X /></button></div>
-      <label className="search-box"><Search /><input autoFocus value={query} onChange={(e) => { const next = e.target.value; setQuery(next); if (next.trim().length < 2) { setResults([]); setSearched(false); setSearching(false); } }} placeholder="Search a city or place" /></label>
-      <button className="location-result home" onClick={() => { select(AUCKLAND); close(); }}><MapPin /><span><b>Auckland</b><small>New Zealand · Default</small></span></button>
-      <div className="search-results">{searching ? <p className="search-status">Searching the world…</p> : results.map((item) => <button className="location-result" key={`${item.latitude}-${item.longitude}`} onClick={() => { select(item); close(); }}><MapPin /><span><b>{item.name}</b><small>{item.country}</small></span></button>)}{searched && !searching && !results.length && <p className="search-status">No matching places found. Try a nearby city.</p>}</div>
+      <label className="search-box"><Search /><input autoFocus value={query} role="combobox" aria-expanded={results.length > 0} aria-controls="location-results" aria-activedescendant={results[activeIndex] ? `location-${activeIndex}` : undefined} onKeyDown={(event) => { if (event.key === "ArrowDown") { event.preventDefault(); setActiveIndex((value) => Math.min(results.length - 1, value + 1)); } if (event.key === "ArrowUp") { event.preventDefault(); setActiveIndex((value) => Math.max(0, value - 1)); } if (event.key === "Enter" && results[activeIndex]) { event.preventDefault(); choose(results[activeIndex]); } }} onChange={(e) => { const next = e.target.value; setQuery(next); setStatus(next.trim().length ? "typing" : "idle"); if (next.trim().length < 2) setResults([]); }} placeholder="Search a city or place" /></label>
+      <button className="location-result home" onClick={() => choose(AUCKLAND)}><MapPin /><span><b>Auckland</b><small>New Zealand · Default</small></span></button>
+      <div className="search-results" id="location-results" role="listbox">{results.map((item, index) => <button id={`location-${index}`} role="option" aria-selected={index === activeIndex} className={`location-result ${index === activeIndex ? "active" : ""}`} key={`${item.latitude}-${item.longitude}`} onMouseEnter={() => setActiveIndex(index)} onClick={() => choose(item)}><MapPin /><span><b>{item.name}</b><small>{item.country}</small></span></button>)}{status === "loading" && <p className="search-status">Searching the world…</p>}{status === "empty" && <p className="search-status">No matching locations.</p>}{status === "error" && <p className="search-status">Location search is temporarily unavailable. Your current weather is still available.</p>}</div>
     </motion.div>
   </motion.div>}</AnimatePresence>;
 }
@@ -148,30 +151,52 @@ function SettingsPanel({ open, close, quality, setQuality }: { open: boolean; cl
   </motion.div></motion.div>}</AnimatePresence>;
 }
 
-function LoadingState() { return <main className="weather-app loading-state"><div className="loading-sky"><div className="loading-brand">ATMOS <span>AUCKLAND</span></div><div className="skeleton temperature-skeleton"/><div className="skeleton line-skeleton"/><div className="loading-pulse">Reading the sky</div></div><div className="loading-sheet"><div className="skeleton row-skeleton"/><div className="skeleton graph-skeleton"/></div></main>; }
+function getPositionWithTimeout(timeoutMs = 5000) {
+  return new Promise<GeolocationPosition>((resolve, reject) => {
+    if (!navigator.geolocation) { reject(new Error("Geolocation is unavailable")); return; }
+    navigator.geolocation.getCurrentPosition(resolve, reject, { enableHighAccuracy: false, timeout: timeoutMs, maximumAge: 10 * 60 * 1000 });
+  });
+}
+
+function LoadingState({ slow, retry, useAuckland }: { slow: boolean; retry: () => void; useAuckland: () => void }) { return <main className="weather-app loading-state"><div className="loading-sky"><div className="loading-brand">ATMOS <span>AUCKLAND</span></div><div className="skeleton temperature-skeleton"/><div className="skeleton line-skeleton"/><div className="loading-pulse">Reading the sky</div>{slow && <div className="loading-recovery" role="status"><strong>The sky is taking a little longer to answer.</strong><span>Auckland remains the default—location permission is not required.</span><div><button onClick={retry}><RefreshCw /> Retry weather</button><button onClick={useAuckland}><MapPin /> Use Auckland</button></div></div>}</div><div className="loading-sheet"><div className="skeleton row-skeleton"/><div className="skeleton graph-skeleton"/></div></main>; }
 
 export default function WeatherApp() {
-  const { location, data, loading, refreshing, error, offline, setLocation, refresh } = useWeather();
+  const { location, pendingLocation, failedLocation, locationStatus, locationError, data, loading, refreshing, error, offline, cached, slow, setLocation, cancelLocationSwitch, retryLocation, dismissLocationError, useAuckland, refresh } = useWeather();
   const [selectedDay, setSelectedDay] = useState(0); const [searchOpen, setSearchOpen] = useState(false); const [settingsOpen, setSettingsOpen] = useState(false); const [geoMessage, setGeoMessage] = useState<string | null>(null);
   const [quality, setQualityState] = useState<QualityMode>("auto");
   const qualityResolved = useMemo<QualityMode>(() => quality !== "auto" ? quality : typeof navigator !== "undefined" && ((navigator.hardwareConcurrency ?? 8) <= 4 || navigator.connection?.saveData) ? "balanced" : "high", [quality]);
-  useEffect(() => { const saved = localStorage.getItem("atmos-quality") as QualityMode | null; if (saved) queueMicrotask(() => setQualityState(saved)); if ("serviceWorker" in navigator) void navigator.serviceWorker.register("/sw.js"); }, []);
-  useEffect(() => { if (!data || location.name !== "Auckland" || !navigator.geolocation) return; const timer = window.setTimeout(() => navigator.geolocation.getCurrentPosition((position) => setLocation({ name: "My location", country: "Current position", latitude: position.coords.latitude, longitude: position.coords.longitude }), (failure) => { if (failure.code === failure.PERMISSION_DENIED) setGeoMessage("Location access is off — showing Auckland instead."); }, { timeout: 8000, maximumAge: 600000 }), 1600); return () => clearTimeout(timer); }, [data, location.name, setLocation]);
-  const setQuality = (mode: QualityMode) => { setQualityState(mode); localStorage.setItem("atmos-quality", mode); };
-  if (loading && !data) return <LoadingState />;
-  if (error || !data) return <main className="error-page"><div><WeatherIcon code={3} size={56}/><p>FORECAST UNAVAILABLE</p><h1>The sky went quiet.</h1><span>{error}</span><button onClick={refresh}><RefreshCw /> Try again</button></div></main>;
+  useEffect(() => {
+    try { const saved = localStorage.getItem("atmos-quality") as QualityMode | null; if (saved) queueMicrotask(() => setQualityState(saved)); } catch { /* Quality defaults to automatic. */ }
+    if (!("serviceWorker" in navigator)) return;
+    if (process.env.NODE_ENV === "production") void navigator.serviceWorker.register("/sw.js").catch(() => undefined);
+    else void navigator.serviceWorker.getRegistrations().then((registrations) => Promise.all(registrations.map((registration) => registration.unregister()))).catch(() => undefined);
+  }, []);
+  useEffect(() => {
+    const openSearch = () => setSearchOpen(true);
+    const openSettings = () => setSettingsOpen(true);
+    window.addEventListener("atmos-open-location-search", openSearch);
+    window.addEventListener("atmos-open-settings", openSettings);
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("search") === "1") queueMicrotask(openSearch);
+    if (params.get("settings") === "1") queueMicrotask(openSettings);
+    return () => { window.removeEventListener("atmos-open-location-search", openSearch); window.removeEventListener("atmos-open-settings", openSettings); };
+  }, []);
+  useEffect(() => { if (!data || location.name !== "Auckland" || !navigator.geolocation) return; let active = true; const timer = window.setTimeout(() => { void getPositionWithTimeout(5000).then((position) => { if (active) setLocation({ name: "My location", country: "Current position", latitude: position.coords.latitude, longitude: position.coords.longitude }); }).catch((failure: GeolocationPositionError | Error) => { if (active && "code" in failure && failure.code === 1) setGeoMessage("Location access is off — showing Auckland instead."); }); }, 1600); return () => { active = false; clearTimeout(timer); }; }, [data, location.name, setLocation]);
+  const setQuality = (mode: QualityMode) => { setQualityState(mode); window.dispatchEvent(new CustomEvent("atmos-quality-changed", { detail: mode })); try { localStorage.setItem("atmos-quality", mode); } catch { /* The setting still applies for this visit. */ } };
+  if (loading && !data) return <LoadingState slow={slow} retry={refresh} useAuckland={useAuckland} />;
+  if (!data) return <main className="error-page"><div><WeatherIcon code={3} size={56}/><p>FORECAST UNAVAILABLE</p><h1>I couldn’t read the sky just yet.</h1><span>{error}</span><button onClick={refresh}><RefreshCw /> Try again</button><button onClick={useAuckland}><MapPin /> Use Auckland</button></div></main>;
   const selected = data.days[selectedDay] ?? data.days[0];
   return <main className="weather-app">
     <header className="topbar">
       <button className="location-button" onClick={() => setSearchOpen(true)} aria-label={`Change location, currently ${location.name}`}><MapPin /><span><b>{location.name}</b><small>{new Intl.DateTimeFormat("en-NZ", { weekday: "long", month: "long", day: "numeric", timeZone: data.timezone }).format(new Date())}</small></span></button>
       <div className="top-actions"><button onClick={() => setSearchOpen(true)} aria-label="Search locations"><Search /></button><button onClick={() => setSettingsOpen(true)} aria-label="Open settings"><Settings /></button></div>
     </header>
-    {(offline || geoMessage || refreshing) && <div className="status-pill" role="status">{refreshing ? <><RefreshCw className="spin"/> Refreshing weather…</> : offline ? `Offline · Updated ${formatTime(data.updatedAt)}` : geoMessage}<button onClick={() => setGeoMessage(null)} aria-label="Dismiss message"><X /></button></div>}
-    <SwipeDeck data={data} index={selectedDay} setIndex={setSelectedDay} quality={qualityResolved} />
-    <ForecastSheet data={data} selectedDay={selectedDay} setSelectedDay={setSelectedDay} />
+    <AnimatePresence>{locationStatus === "switching" && pendingLocation && <motion.div className="location-switch-toast" initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }} transition={{ duration: .4, ease: softEase }} role="status"><RefreshCw className="spin" /><span><b>Loading {pendingLocation.name}…</b><small>Your {location.name} forecast stays visible.</small></span><button onClick={cancelLocationSwitch}>Cancel</button></motion.div>}{locationStatus === "error" && <motion.div className="location-switch-toast error" initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }} role="alert"><MapPin /><span><b>{failedLocation?.name ?? "That location"} couldn’t be loaded.</b><small>{locationError}</small></span><button onClick={retryLocation}>Retry</button><button onClick={dismissLocationError}>Dismiss</button></motion.div>}</AnimatePresence>
+    {(offline || cached || geoMessage || (refreshing && locationStatus !== "switching")) && <div className="status-pill" role="status">{refreshing ? <><RefreshCw className="spin"/> Refreshing weather…</> : offline ? `Offline · Updated ${formatTime(data.updatedAt)}` : cached ? `Cached forecast · Refreshing in the background` : geoMessage}<button onClick={() => setGeoMessage(null)} aria-label="Dismiss message"><X /></button></div>}
+    <AnimatePresence mode="sync" initial={false}><motion.div className="weather-data-stage" key={`${data.location.latitude}-${data.location.longitude}`} initial={{ opacity: .35, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: .45, ease: softEase }}><SwipeDeck data={data} index={selectedDay} setIndex={setSelectedDay} quality={qualityResolved} /><ForecastSheet data={data} selectedDay={selectedDay} setSelectedDay={setSelectedDay} /></motion.div></AnimatePresence>
     <LocationSearch open={searchOpen} close={() => setSearchOpen(false)} select={(next) => { setSelectedDay(0); setLocation(next); }} />
     <SettingsPanel open={settingsOpen} close={() => setSettingsOpen(false)} quality={quality} setQuality={setQuality} />
-    <button className="geo-button" onClick={() => navigator.geolocation?.getCurrentPosition((position) => setLocation({ name: "My location", country: "Current position", latitude: position.coords.latitude, longitude: position.coords.longitude }), () => setGeoMessage("Your location isn’t available. You can search for a city instead."))} aria-label="Use my current location"><LocateFixed /></button>
+    <button className="geo-button" onClick={() => { void getPositionWithTimeout(5000).then((position) => setLocation({ name: "My location", country: "Current position", latitude: position.coords.latitude, longitude: position.coords.longitude })).catch(() => setGeoMessage("Your location isn’t available. You can search for a city instead.")); }} aria-label="Use my current location"><LocateFixed /></button>
     <span className="sr-only" aria-live="polite">Showing {formatDay(selected.date, true)}, {weatherDescription(selected.weatherCode)}</span>
   </main>;
 }
