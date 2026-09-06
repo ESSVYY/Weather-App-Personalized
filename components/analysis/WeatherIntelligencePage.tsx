@@ -79,6 +79,7 @@ export function WeatherIntelligencePage() {
   const reducedMotion = useReducedMotion();
   const [selectedDay, setSelectedDay] = useState(0);
   const [selectedHour, setSelectedHour] = useState(12);
+  const [followsSystemTime, setFollowsSystemTime] = useState(true);
   const [preferences, setPreferences] = useState<WeatherPreferences>(defaultPreferences);
   const [previous, setPrevious] = useState<Snapshot | null>(null);
   const [memory, setMemory] = useState<MemoryDay[]>([]);
@@ -90,6 +91,18 @@ export function WeatherIntelligencePage() {
   const day = data?.days[selectedDay] ?? data?.days[0];
   const intelligence = useMemo(() => day ? deriveWeatherIntelligence(day, data?.days[selectedDay + 1]) : null, [data?.days, day, selectedDay]);
   const fitScore = useMemo(() => day ? derivePersonalFit(day, preferences) : 0, [day, preferences]);
+
+  useEffect(() => {
+    if (!data?.days[0] || selectedDay !== 0 || !followsSystemTime) return;
+    const syncToSystemTime = () => {
+      const systemHour = new Date().getHours();
+      const matchingIndex = data.days[0].hours.findIndex((item) => Number(item.time.slice(11, 13)) === systemHour);
+      setSelectedHour(matchingIndex >= 0 ? matchingIndex : Math.min(systemHour, data.days[0].hours.length - 1));
+    };
+    syncToSystemTime();
+    const timer = window.setInterval(syncToSystemTime, 60_000);
+    return () => window.clearInterval(timer);
+  }, [data?.days, followsSystemTime, selectedDay]);
 
   useEffect(() => {
     const storedPreferences = safeParse<unknown>(PREFERENCES_KEY, null);
@@ -179,12 +192,12 @@ export function WeatherIntelligencePage() {
         <aside><span><MapPin />{location.name}</span><strong>{Math.round(data.current.temperature)}°</strong><p>{weatherDescription(data.current.weatherCode)}</p><small>Updated from the same forecast powering Atmos</small></aside>
       </section>
 
-      <nav className="analysis-day-tabs" aria-label="Choose forecast day">{data.days.map((item, index) => <button key={item.date} className={selectedDay === index ? "active" : ""} onClick={() => { setSelectedDay(index); setSelectedHour(12); }}><span>{index === 0 ? "Today" : new Intl.DateTimeFormat("en-NZ", { weekday: "short" }).format(new Date(`${item.date}T12:00:00`))}</span><b>{Math.round(item.temperatureMax)}°</b><small>{item.precipitationProbability}% rain</small></button>)}</nav>
+      <nav className="analysis-day-tabs" aria-label="Choose forecast day">{data.days.map((item, index) => <button key={item.date} className={selectedDay === index ? "active" : ""} onClick={() => { setSelectedDay(index); setFollowsSystemTime(index === 0); setSelectedHour(index === 0 ? Math.min(new Date().getHours(), item.hours.length - 1) : 12); }}><span>{index === 0 ? "Today" : new Intl.DateTimeFormat("en-NZ", { weekday: "short" }).format(new Date(`${item.date}T12:00:00`))}</span><b>{Math.round(item.temperatureMax)}°</b><small>{item.precipitationProbability}% rain</small></button>)}</nav>
 
-      <InteractiveDayTimeline key={day.date} day={day} selectedIndex={Math.min(selectedHour, day.hours.length - 1)} onSelect={setSelectedHour} />
+      <InteractiveDayTimeline key={day.date} day={day} selectedIndex={Math.min(selectedHour, day.hours.length - 1)} onSelect={(index) => { setFollowsSystemTime(false); setSelectedHour(index); }} />
 
       <div className="intelligence-grid">
-        <section className="intelligence-card dna-card" aria-labelledby="dna-title"><div className="intelligence-card-head"><div><span>WEATHER DNA</span><h2 id="dna-title">The day’s fingerprint</h2></div><BarChart3 /></div><div className="dna-bars" role="img" aria-label={intelligence.dna.map((item) => `${item.label} ${Math.round(item.value)} percent`).join(", ")}>{intelligence.dna.map((item) => <div key={item.label}><i style={{ height: `${Math.max(8, item.value)}%` }} /><span>{item.label}</span><b>{item.display}</b></div>)}</div></section>
+        <section className="intelligence-card dna-card" aria-labelledby="dna-title"><div className="intelligence-card-head"><div><span>WEATHER DNA</span><h2 id="dna-title">The day’s fingerprint</h2></div><BarChart3 /></div><div className="dna-bars" role="img" aria-label={intelligence.dna.map((item) => `${item.label} ${Math.round(item.value)} percent`).join(", ")}>{intelligence.dna.map((item) => <div key={item.label}><b>{item.display}</b><i style={{ height: `${Math.max(8, item.value)}%` }} /><span>{item.label}</span></div>)}</div></section>
 
         <section className="intelligence-card" aria-labelledby="changed-title"><div className="intelligence-card-head"><div><span>WHAT CHANGED?</span><h2 id="changed-title">Since the last reading</h2></div><Activity /></div>{changeItems.length ? <div className="change-list">{changeItems.map((item) => <div key={item.label}><span>{item.label}</span><b className={item.value > 0 ? "up" : item.value < 0 ? "down" : "stable"}>{item.value > 0 ? "+" : ""}{item.value.toFixed(1)}{item.unit}</b></div>)}</div> : <p className="intelligence-empty">This is the first saved reading. Return later and Atmos will show exactly what moved.</p>}</section>
 

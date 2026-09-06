@@ -12,6 +12,8 @@ import type { Location, QualityMode, WeatherData, WeatherDay } from "@/types/wea
 import { WeatherIcon } from "./WeatherIcon";
 import { WeatherScene } from "./WeatherScene";
 import { TemperatureGraph } from "./TemperatureGraph";
+import { AppearanceControl } from "@/components/theme/AppearanceControl";
+import { DEFAULT_DISPLAY_NAME, DISPLAY_NAME_CHANGED_EVENT, DISPLAY_NAME_MAX_LENGTH, DISPLAY_NAME_STORAGE_KEY, normalizeDisplayName } from "@/lib/profile";
 
 const spring = { type: "spring" as const, stiffness: 210, damping: 26, mass: .85 };
 const qualityOptions: Array<{ value: QualityMode; label: string; note: string }> = [
@@ -142,10 +144,18 @@ function LocationSearch({ open, close, select }: { open: boolean; close: () => v
   </motion.div>}</AnimatePresence>;
 }
 
-function SettingsPanel({ open, close, quality, setQuality }: { open: boolean; close: () => void; quality: QualityMode; setQuality: (mode: QualityMode) => void }) {
+function SettingsPanel({ open, close, quality, setQuality, displayName, setDisplayName }: { open: boolean; close: () => void; quality: QualityMode; setQuality: (mode: QualityMode) => void; displayName: string; setDisplayName: (name: string) => void }) {
   return <AnimatePresence>{open && <motion.div className="modal-backdrop" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onMouseDown={(event) => event.target === event.currentTarget && close()}><motion.div className="modal settings-modal" initial={{ y: 40, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 30, opacity: 0 }} transition={spring} role="dialog" aria-modal="true" aria-label="Weather app settings">
-    <div className="modal-head"><div><span>ATMOSPHERE</span><h2>Visual quality</h2></div><button onClick={close} aria-label="Close settings"><X /></button></div>
-    <p className="settings-copy">Choose how much motion and weather detail to render. Reduced-motion preferences are always respected.</p>
+    <div className="modal-head"><div><span>ATMOSPHERE</span><h2>Settings</h2></div><button onClick={close} aria-label="Close settings"><X /></button></div>
+    <p className="settings-copy">Personalise your welcome and choose how Atmos looks and moves.</p>
+    <div className="name-setting">
+      <div className="settings-section-heading"><span>PERSONALISATION</span><h3>Your greeting name</h3></div>
+      <label htmlFor="display-name"><span>Name</span><b>{displayName.length}/{DISPLAY_NAME_MAX_LENGTH}</b></label>
+      <input id="display-name" type="text" value={displayName} maxLength={DISPLAY_NAME_MAX_LENGTH} onChange={(event) => setDisplayName(event.target.value)} placeholder={DEFAULT_DISPLAY_NAME} autoComplete="nickname" />
+      <p>Up to 12 characters allowed. Leave it empty to use Saksham.</p>
+    </div>
+    <AppearanceControl />
+    <div className="settings-section-heading quality-heading"><span>PERFORMANCE</span><h3>Visual quality</h3></div>
     <div className="quality-list">{qualityOptions.map((option) => <button key={option.value} className={quality === option.value ? "selected" : ""} onClick={() => setQuality(option.value)}><span><b>{option.label}</b><small>{option.note}</small></span><i /></button>)}</div>
     <Link className="settings-about-link" href="/about">About Me <span>Meet the designer and developer</span></Link>
   </motion.div></motion.div>}</AnimatePresence>;
@@ -164,9 +174,15 @@ export default function WeatherApp() {
   const { location, pendingLocation, failedLocation, locationStatus, locationError, data, loading, refreshing, error, offline, cached, slow, setLocation, cancelLocationSwitch, retryLocation, dismissLocationError, useAuckland, refresh } = useWeather();
   const [selectedDay, setSelectedDay] = useState(0); const [searchOpen, setSearchOpen] = useState(false); const [settingsOpen, setSettingsOpen] = useState(false); const [geoMessage, setGeoMessage] = useState<string | null>(null);
   const [quality, setQualityState] = useState<QualityMode>("auto");
+  const [displayName, setDisplayNameState] = useState(DEFAULT_DISPLAY_NAME);
   const qualityResolved = useMemo<QualityMode>(() => quality !== "auto" ? quality : typeof navigator !== "undefined" && ((navigator.hardwareConcurrency ?? 8) <= 4 || navigator.connection?.saveData) ? "balanced" : "high", [quality]);
   useEffect(() => {
-    try { const saved = localStorage.getItem("atmos-quality") as QualityMode | null; if (saved) queueMicrotask(() => setQualityState(saved)); } catch { /* Quality defaults to automatic. */ }
+    try {
+      const saved = localStorage.getItem("atmos-quality") as QualityMode | null;
+      const savedName = localStorage.getItem(DISPLAY_NAME_STORAGE_KEY);
+      if (saved) queueMicrotask(() => setQualityState(saved));
+      if (savedName !== null) queueMicrotask(() => setDisplayNameState(normalizeDisplayName(savedName)));
+    } catch { /* Defaults remain available without storage. */ }
     if (!("serviceWorker" in navigator)) return;
     if (process.env.NODE_ENV === "production") void navigator.serviceWorker.register("/sw.js").catch(() => undefined);
     else void navigator.serviceWorker.getRegistrations().then((registrations) => Promise.all(registrations.map((registration) => registration.unregister()))).catch(() => undefined);
@@ -183,10 +199,16 @@ export default function WeatherApp() {
   }, []);
   useEffect(() => { if (!data || location.name !== "Auckland" || !navigator.geolocation) return; let active = true; const timer = window.setTimeout(() => { void getPositionWithTimeout(5000).then((position) => { if (active) setLocation({ name: "My location", country: "Current position", latitude: position.coords.latitude, longitude: position.coords.longitude }); }).catch((failure: GeolocationPositionError | Error) => { if (active && "code" in failure && failure.code === 1) setGeoMessage("Location access is off — showing Auckland instead."); }); }, 1600); return () => { active = false; clearTimeout(timer); }; }, [data, location.name, setLocation]);
   const setQuality = (mode: QualityMode) => { setQualityState(mode); window.dispatchEvent(new CustomEvent("atmos-quality-changed", { detail: mode })); try { localStorage.setItem("atmos-quality", mode); } catch { /* The setting still applies for this visit. */ } };
+  const setDisplayName = (name: string) => {
+    const next = normalizeDisplayName(name);
+    setDisplayNameState(next);
+    window.dispatchEvent(new CustomEvent(DISPLAY_NAME_CHANGED_EVENT, { detail: next }));
+    try { localStorage.setItem(DISPLAY_NAME_STORAGE_KEY, next); } catch { /* The name still applies for this visit. */ }
+  };
   if (loading && !data) return <LoadingState slow={slow} retry={refresh} useAuckland={useAuckland} />;
   if (!data) return <main className="error-page"><div><WeatherIcon code={3} size={56}/><p>FORECAST UNAVAILABLE</p><h1>I couldn’t read the sky just yet.</h1><span>{error}</span><button onClick={refresh}><RefreshCw /> Try again</button><button onClick={useAuckland}><MapPin /> Use Auckland</button></div></main>;
   const selected = data.days[selectedDay] ?? data.days[0];
-  return <main className="weather-app">
+  return <main className={`weather-app ${getDayPeriod(selected, data, selectedDay).isDay ? "is-day" : "is-night"}`}>
     <header className="topbar">
       <button className="location-button" onClick={() => setSearchOpen(true)} aria-label={`Change location, currently ${location.name}`}><MapPin /><span><b>{location.name}</b><small>{new Intl.DateTimeFormat("en-NZ", { weekday: "long", month: "long", day: "numeric", timeZone: data.timezone }).format(new Date())}</small></span></button>
       <div className="top-actions"><button onClick={() => setSearchOpen(true)} aria-label="Search locations"><Search /></button><button onClick={() => setSettingsOpen(true)} aria-label="Open settings"><Settings /></button></div>
@@ -195,7 +217,7 @@ export default function WeatherApp() {
     {(offline || cached || geoMessage || (refreshing && locationStatus !== "switching")) && <div className="status-pill" role="status">{refreshing ? <><RefreshCw className="spin"/> Refreshing weather…</> : offline ? `Offline · Updated ${formatTime(data.updatedAt)}` : cached ? `Cached forecast · Refreshing in the background` : geoMessage}<button onClick={() => setGeoMessage(null)} aria-label="Dismiss message"><X /></button></div>}
     <AnimatePresence mode="sync" initial={false}><motion.div className="weather-data-stage" key={`${data.location.latitude}-${data.location.longitude}`} initial={{ opacity: .35, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: .45, ease: softEase }}><SwipeDeck data={data} index={selectedDay} setIndex={setSelectedDay} quality={qualityResolved} /><ForecastSheet data={data} selectedDay={selectedDay} setSelectedDay={setSelectedDay} /></motion.div></AnimatePresence>
     <LocationSearch open={searchOpen} close={() => setSearchOpen(false)} select={(next) => { setSelectedDay(0); setLocation(next); }} />
-    <SettingsPanel open={settingsOpen} close={() => setSettingsOpen(false)} quality={quality} setQuality={setQuality} />
+    <SettingsPanel open={settingsOpen} close={() => setSettingsOpen(false)} quality={quality} setQuality={setQuality} displayName={displayName} setDisplayName={setDisplayName} />
     <button className="geo-button" onClick={() => { void getPositionWithTimeout(5000).then((position) => setLocation({ name: "My location", country: "Current position", latitude: position.coords.latitude, longitude: position.coords.longitude })).catch(() => setGeoMessage("Your location isn’t available. You can search for a city instead.")); }} aria-label="Use my current location"><LocateFixed /></button>
     <span className="sr-only" aria-live="polite">Showing {formatDay(selected.date, true)}, {weatherDescription(selected.weatherCode)}</span>
   </main>;
